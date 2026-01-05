@@ -1,5 +1,5 @@
 /**
- * Webhook endpoint to receive answers from ExamsGPT
+ * Webhook endpoint to receive answers and processing status from ExamsGPT
  * POST /api/webhook
  */
 
@@ -12,7 +12,22 @@ export default defineEventHandler(async (event) => {
 
     console.log('[Webhook] Received data:', body)
 
-    // Validate required fields
+    const eventType = body.type || 'answer'
+
+    // Handle processing event
+    if (eventType === 'processing') {
+      answerEmitter.emit({
+        type: 'processing',
+        timestamp: body.timestamp || new Date().toISOString()
+      })
+
+      return {
+        success: true,
+        message: 'Processing status broadcasted'
+      }
+    }
+
+    // Handle answer event
     if (!body.answer) {
       return {
         success: false,
@@ -22,6 +37,7 @@ export default defineEventHandler(async (event) => {
 
     // Emit the answer to all connected clients via SSE
     answerEmitter.emit({
+      type: 'answer',
       answer: body.answer,
       timestamp: body.timestamp || new Date().toISOString(),
       model: body.model

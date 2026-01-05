@@ -11,13 +11,21 @@
 
     <!-- Main Answer Display -->
     <main class="main">
-      <div v-if="!currentAnswer" class="waiting">
+      <!-- Processing indicator -->
+      <div v-if="isProcessing" class="processing-indicator">
+        <div class="spinner"></div>
+        <p>Analizando pregunta...</p>
+      </div>
+
+      <!-- Waiting state (no answer yet and not processing) -->
+      <div v-if="!currentAnswer && !isProcessing" class="waiting">
         <div class="pulse-ring"></div>
         <p>Waiting for exam question...</p>
         <small>Press "\" in ExamsGPT to capture and analyze</small>
       </div>
 
-      <div v-else class="answer-container">
+      <!-- Answer display (show even while processing new one) -->
+      <div v-if="currentAnswer" class="answer-container" :class="{ 'dimmed': isProcessing }">
         <div class="answer-box">
           <h2 class="answer-text">{{ currentAnswer.answer }}</h2>
 
@@ -40,14 +48,27 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 
 interface AnswerData {
+  type: 'answer'
   answer: string
   timestamp: string
   model?: string
 }
 
+interface ProcessingData {
+  type: 'processing'
+  timestamp: string
+}
+
+type EventData = AnswerData | ProcessingData
+
 const currentAnswer = ref<AnswerData | null>(null)
+const isProcessing = ref(false)
 const connected = ref(false)
 let eventSource: EventSource | null = null
+let processingTimeout: ReturnType<typeof setTimeout> | null = null
+
+// Processing timeout (60 seconds) - resets if no answer received
+const PROCESSING_TIMEOUT_MS = 60000
 
 // Format timestamp
 const formatTimestamp = (timestamp: string) => {
@@ -77,12 +98,34 @@ const connectSSE = () => {
   eventSource.onmessage = (event) => {
     console.log('[Frontend] Raw event data:', event.data)
     try {
-      const data = JSON.parse(event.data)
-      console.log('[Frontend] Parsed answer data:', data)
+      const data = JSON.parse(event.data) as EventData
+      console.log('[Frontend] Parsed event data:', data)
 
-      // Only update if we have valid answer data
-      if (data.answer) {
+      // Handle processing event
+      if (data.type === 'processing') {
+        isProcessing.value = true
+        console.log('[Frontend] ✓ Processing started')
+
+        // Set timeout to auto-clear processing state (in case of backend error)
+        if (processingTimeout) clearTimeout(processingTimeout)
+        processingTimeout = setTimeout(() => {
+          if (isProcessing.value) {
+            console.log('[Frontend] ⚠ Processing timeout - clearing state')
+            isProcessing.value = false
+          }
+        }, PROCESSING_TIMEOUT_MS)
+        return
+      }
+
+      // Handle answer event
+      if (data.type === 'answer' && data.answer) {
+        // Clear timeout since we got an answer
+        if (processingTimeout) {
+          clearTimeout(processingTimeout)
+          processingTimeout = null
+        }
         currentAnswer.value = data
+        isProcessing.value = false
         console.log('[Frontend] ✓ Answer updated in UI')
       }
     } catch (error) {
@@ -110,6 +153,9 @@ onMounted(() => {
 onUnmounted(() => {
   if (eventSource) {
     eventSource.close()
+  }
+  if (processingTimeout) {
+    clearTimeout(processingTimeout)
   }
 })
 </script>
@@ -182,6 +228,34 @@ onUnmounted(() => {
   padding: 2rem;
 }
 
+/* Processing State */
+.processing-indicator {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.spinner {
+  width: 60px;
+  height: 60px;
+  border: 4px solid rgba(96, 165, 250, 0.3);
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  margin: 0 auto 1rem;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.processing-indicator p {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #60a5fa;
+}
+
 /* Waiting State */
 .waiting {
   text-align: center;
@@ -228,6 +302,11 @@ onUnmounted(() => {
   width: 100%;
   max-width: 1200px;
   animation: fadeIn 0.5s ease-in;
+  transition: opacity 0.3s ease;
+}
+
+.answer-container.dimmed {
+  opacity: 0.5;
 }
 
 @keyframes fadeIn {

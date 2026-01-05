@@ -1,5 +1,5 @@
 /**
- * SSE (Server-Sent Events) endpoint for real-time answer updates
+ * SSE (Server-Sent Events) endpoint for real-time answer and processing updates
  * GET /api/stream
  */
 
@@ -23,17 +23,24 @@ export default defineEventHandler(async (event) => {
   console.log('[SSE] Sending connection confirmation')
   stream.push('Connected to ExamsGPT live feed')
 
-  // Send latest answer immediately if available
+  // Send current state immediately
+  const isProcessing = answerEmitter.getIsProcessing()
+  if (isProcessing) {
+    console.log('[SSE] Sending current processing state')
+    stream.push(JSON.stringify({ type: 'processing', timestamp: new Date().toISOString() }))
+  }
+
   const latest = answerEmitter.getLatest()
   if (latest) {
-    console.log('[SSE] Sending latest answer immediately:', latest.answer.substring(0, 50))
+    console.log('[SSE] Sending latest answer:', latest.answer.substring(0, 50))
     stream.push(JSON.stringify(latest))
   }
 
-  // Listen for new answers
+  // Listen for new events (both processing and answer)
   const listener = (data: any) => {
     try {
-      console.log('[SSE] Pushing new data to client:', data.answer.substring(0, 50))
+      const preview = data.type === 'answer' ? data.answer.substring(0, 50) : 'processing started'
+      console.log('[SSE] Pushing new data to client:', preview)
       stream.push(JSON.stringify(data))
     } catch (error) {
       console.error('[SSE] Error pushing data:', error)
