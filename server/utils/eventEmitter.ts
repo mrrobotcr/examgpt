@@ -3,6 +3,7 @@
  * Stores the latest answer in memory and supports processing status
  *
  * Uses globalThis to persist across HMR (Hot Module Replacement) in development
+ * Includes messageId for deduplication and reliable delivery
  */
 
 interface AnswerData {
@@ -10,39 +11,60 @@ interface AnswerData {
   answer: string
   timestamp: string
   model?: string
+  messageId?: string
 }
 
 interface ProcessingData {
   type: 'processing'
   timestamp: string
+  messageId?: string
 }
 
 type EventData = AnswerData | ProcessingData
+
+// Generate unique message ID
+function generateMessageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+}
 
 class AnswerEventEmitter {
   private latestAnswer: AnswerData | null = null
   private isProcessing: boolean = false
   private listeners: Array<(data: EventData) => void> = []
+  private lastMessageId: string | null = null
 
   // Emit new event (processing or answer)
   emit(data: EventData) {
-    if (data.type === 'processing') {
+    // Add unique messageId if not present
+    const messageId = data.messageId || generateMessageId()
+    const dataWithId = { ...data, messageId }
+
+    if (dataWithId.type === 'processing') {
       this.isProcessing = true
-      console.log(`[EventEmitter] Processing started. Active listeners: ${this.listeners.length}`)
+      this.lastMessageId = messageId
+      console.log(`[EventEmitter] Processing started [${messageId}]. Active listeners: ${this.listeners.length}`)
     } else {
-      this.latestAnswer = data
+      this.latestAnswer = dataWithId as AnswerData
       this.isProcessing = false
-      console.log(`[EventEmitter] New answer emitted: ${data.answer.substring(0, 50)}... Active listeners: ${this.listeners.length}`)
+      this.lastMessageId = messageId
+      console.log(`[EventEmitter] New answer emitted [${messageId}]: ${dataWithId.answer.substring(0, 50)}... Active listeners: ${this.listeners.length}`)
     }
 
     // Notify all listeners
+    let successCount = 0
+    let errorCount = 0
+
     this.listeners.forEach(listener => {
       try {
-        listener(data)
+        listener(dataWithId)
+        successCount++
       } catch (error) {
+        errorCount++
         console.error('[EventEmitter] Error notifying listener:', error)
       }
     })
+
+    console.log(`[EventEmitter] Notified ${successCount} listeners successfully, ${errorCount} errors`)
   }
 
   // Subscribe to future events (initial state is handled separately by stream.get.ts)
@@ -68,6 +90,16 @@ class AnswerEventEmitter {
   // Check if currently processing
   getIsProcessing(): boolean {
     return this.isProcessing
+  }
+
+  // Get last message ID (for polling comparison)
+  getLastMessageId(): string | null {
+    return this.lastMessageId
+  }
+
+  // Get listener count (for debugging)
+  getListenerCount(): number {
+    return this.listeners.length
   }
 }
 

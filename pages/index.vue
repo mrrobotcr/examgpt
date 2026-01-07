@@ -215,14 +215,22 @@ interface AnswerData {
   answer: string
   timestamp: string
   model?: string
+  messageId?: string
 }
 
 interface ProcessingData {
   type: 'processing'
   timestamp: string
+  messageId?: string
 }
 
-type EventData = AnswerData | ProcessingData
+interface HeartbeatData {
+  type: 'heartbeat'
+  timestamp: string
+  lastMessageId?: string
+}
+
+type EventData = AnswerData | ProcessingData | HeartbeatData
 
 // Parsed answer types
 interface SingleAnswer {
@@ -289,8 +297,13 @@ const isProcessing = ref(false)
 const connected = ref(false)
 let eventSource: EventSource | null = null
 let processingTimeout: ReturnType<typeof setTimeout> | null = null
+let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null
+let pollingInterval: ReturnType<typeof setInterval> | null = null
+let lastMessageId: string | null = null
 
 const PROCESSING_TIMEOUT_MS = 60000
+const HEARTBEAT_TIMEOUT_MS = 25000 // Should receive heartbeat every 15s, timeout at 25s
+const POLLING_INTERVAL_MS = 5000 // Fallback polling every 5s when SSE is unreliable
 
 // Raw answer text
 const rawAnswer = computed(() => currentAnswer.value?.answer || '')
@@ -326,6 +339,63 @@ const formatTimestamp = (timestamp: string) => {
   }
 }
 
+// Fetch latest state from server (fallback polling)
+const fetchLatest = async () => {
+  try {
+    const response = await fetch('/api/latest')
+    const data = await response.json()
+
+    if (!data.success) return
+
+    // Check if there's a new message we missed
+    if (data.lastMessageId && data.lastMessageId !== lastMessageId) {
+      console.log('[Frontend] Polling detected new message:', data.lastMessageId)
+
+      // Update processing state
+      if (data.isProcessing && !isProcessing.value) {
+        isProcessing.value = true
+        console.log('[Frontend] Polling: Processing started')
+      }
+
+      // Update answer if available and different
+      if (data.answer && data.answer.messageId !== lastMessageId) {
+        currentAnswer.value = data.answer
+        isProcessing.value = false
+        lastMessageId = data.answer.messageId
+        console.log('[Frontend] Polling: Answer updated from fallback')
+      }
+    }
+  } catch (error) {
+    console.error('[Frontend] Polling error:', error)
+  }
+}
+
+// Start fallback polling when SSE seems unreliable
+const startPolling = () => {
+  if (pollingInterval) return
+  console.log('[Frontend] Starting fallback polling')
+  pollingInterval = setInterval(fetchLatest, POLLING_INTERVAL_MS)
+}
+
+// Stop polling when SSE is working well
+const stopPolling = () => {
+  if (pollingInterval) {
+    console.log('[Frontend] Stopping fallback polling')
+    clearInterval(pollingInterval)
+    pollingInterval = null
+  }
+}
+
+// Reset heartbeat timeout
+const resetHeartbeatTimeout = () => {
+  if (heartbeatTimeout) clearTimeout(heartbeatTimeout)
+  heartbeatTimeout = setTimeout(() => {
+    console.warn('[Frontend] Heartbeat timeout - SSE may be disconnected')
+    connected.value = false
+    startPolling()
+  }, HEARTBEAT_TIMEOUT_MS)
+}
+
 const connectSSE = () => {
   console.log('[Frontend] Connecting to SSE stream...')
   eventSource = new EventSource('/api/stream')
@@ -333,52 +403,102 @@ const connectSSE = () => {
   eventSource.onopen = () => {
     console.log('[Frontend] SSE connection opened')
     connected.value = true
+    resetHeartbeatTimeout()
+    // Fetch latest immediately on connect to catch any missed messages
+    fetchLatest()
   }
 
   eventSource.onmessage = (event) => {
-    console.log('[Frontend] Raw event data:', event.data)
     try {
       const data = JSON.parse(event.data) as EventData
 
+      // Handle heartbeat
+      if (data.type === 'heartbeat') {
+        resetHeartbeatTimeout()
+        connected.value = true
+        stopPolling() // SSE is working, no need for polling
+
+        // Check if we missed a message
+        const heartbeat = data as HeartbeatData
+        if (heartbeat.lastMessageId && heartbeat.lastMessageId !== lastMessageId) {
+          console.log('[Frontend] Heartbeat shows missed message, fetching...')
+          fetchLatest()
+        }
+        return
+      }
+
+      // Reset heartbeat on any message
+      resetHeartbeatTimeout()
+      connected.value = true
+      stopPolling()
+
+      // Handle processing
       if (data.type === 'processing') {
+        const processingData = data as ProcessingData
         isProcessing.value = true
+        if (processingData.messageId) lastMessageId = processingData.messageId
+
         if (processingTimeout) clearTimeout(processingTimeout)
         processingTimeout = setTimeout(() => {
           if (isProcessing.value) {
             isProcessing.value = false
           }
         }, PROCESSING_TIMEOUT_MS)
+        console.log('[Frontend] Processing started')
         return
       }
 
-      if (data.type === 'answer' && data.answer) {
+      // Handle answer
+      if (data.type === 'answer') {
+        const answerData = data as AnswerData
         if (processingTimeout) {
           clearTimeout(processingTimeout)
           processingTimeout = null
         }
-        currentAnswer.value = data
+
+        // Deduplicate by messageId
+        if (answerData.messageId && answerData.messageId === lastMessageId) {
+          console.log('[Frontend] Duplicate answer ignored:', answerData.messageId)
+          return
+        }
+
+        currentAnswer.value = answerData
         isProcessing.value = false
-        console.log('[Frontend] Answer updated')
+        if (answerData.messageId) lastMessageId = answerData.messageId
+        console.log('[Frontend] Answer updated:', answerData.messageId)
       }
     } catch (error) {
-      console.log('[Frontend] Non-JSON message:', event.data)
+      // Non-JSON message (connection confirmation)
+      console.log('[Frontend] Connection message:', event.data)
     }
   }
 
   eventSource.onerror = () => {
-    console.error('[Frontend] SSE error')
+    console.error('[Frontend] SSE error - reconnecting...')
     connected.value = false
+    if (heartbeatTimeout) clearTimeout(heartbeatTimeout)
+    startPolling() // Start polling while SSE is down
+
+    // Close and reconnect
+    if (eventSource) {
+      eventSource.close()
+      eventSource = null
+    }
     setTimeout(() => connectSSE(), 3000)
   }
 }
 
 onMounted(() => {
   connectSSE()
+  // Initial fetch to get any existing state
+  fetchLatest()
 })
 
 onUnmounted(() => {
   if (eventSource) eventSource.close()
   if (processingTimeout) clearTimeout(processingTimeout)
+  if (heartbeatTimeout) clearTimeout(heartbeatTimeout)
+  if (pollingInterval) clearInterval(pollingInterval)
 })
 </script>
 
