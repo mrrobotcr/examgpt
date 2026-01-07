@@ -1,51 +1,214 @@
 <template>
-  <div class="container">
-    <!-- Header -->
+  <div class="app">
+    <!-- Floating Header -->
     <header class="header">
-      <h1>ExamsGPT Live</h1>
-      <div class="status">
-        <span :class="['status-dot', connected ? 'connected' : 'disconnected']"></span>
-        <span>{{ connected ? 'Connected' : 'Connecting...' }}</span>
+      <div class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">ExamsGPT</span>
+      </div>
+      <div class="connection-status" :class="{ connected }">
+        <span class="status-pulse"></span>
+        <span class="status-text">{{ connected ? 'LIVE' : 'CONNECTING' }}</span>
       </div>
     </header>
 
-    <!-- Main Answer Display -->
+    <!-- Main Content -->
     <main class="main">
-      <!-- Processing indicator -->
-      <div v-if="isProcessing" class="processing-indicator">
-        <div class="spinner"></div>
-        <p>Analizando pregunta...</p>
+      <!-- Processing State -->
+      <div v-if="isProcessing" class="processing">
+        <div class="processing-animation">
+          <div class="scan-line"></div>
+          <div class="processing-icon">🔍</div>
+        </div>
+        <p class="processing-text">ANALYZING QUESTION</p>
+        <div class="processing-dots">
+          <span></span><span></span><span></span>
+        </div>
       </div>
 
-      <!-- Waiting state (no answer yet and not processing) -->
-      <div v-if="!currentAnswer && !isProcessing" class="waiting">
-        <div class="pulse-ring"></div>
-        <p>Waiting for exam question...</p>
-        <small>Press "\" in ExamsGPT to capture and analyze</small>
+      <!-- Waiting State -->
+      <div v-else-if="!currentAnswer" class="waiting">
+        <div class="waiting-icon">
+          <div class="radar-ping"></div>
+          <span>📸</span>
+        </div>
+        <h2 class="waiting-title">READY TO SCAN</h2>
+        <p class="waiting-subtitle">Press trigger key or middle mouse button</p>
       </div>
 
-      <!-- Answer display (show even while processing new one) -->
-      <div v-if="currentAnswer" class="answer-container" :class="{ 'dimmed': isProcessing }">
-        <div class="answer-box">
-          <h2 class="answer-text">{{ currentAnswer.answer }}</h2>
-
-          <div class="metadata">
-            <span class="timestamp">{{ formatTimestamp(currentAnswer.timestamp) }}</span>
-            <span v-if="currentAnswer.model" class="model">{{ currentAnswer.model }}</span>
+      <!-- Answer Display -->
+      <div v-else class="answer-display">
+        <!-- Single Choice -->
+        <div v-if="parsedAnswer.type === 'single'" class="answer-card single">
+          <div class="answer-header">
+            <span class="answer-type-badge">SINGLE CHOICE</span>
           </div>
+          <div class="single-answer">
+            <div class="correct-letter">{{ parsedAnswer.answer }}</div>
+            <div v-if="parsedAnswer.options" class="options-list">
+              <div
+                v-for="(option, idx) in parsedAnswer.options"
+                :key="idx"
+                class="option-item"
+                :class="{ correct: idx === parsedAnswer.correct_index }"
+              >
+                <span class="option-marker">{{ idx === parsedAnswer.correct_index ? '✓' : '○' }}</span>
+                <span class="option-text">{{ option }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Multiple Choice -->
+        <div v-else-if="parsedAnswer.type === 'multiple'" class="answer-card multiple">
+          <div class="answer-header">
+            <span class="answer-type-badge multiple">MULTIPLE CHOICE</span>
+            <span class="answer-count">{{ parsedAnswer.answers?.length }} answers</span>
+          </div>
+          <div class="multiple-answers">
+            <div class="correct-letters">
+              <span v-for="ans in parsedAnswer.answers" :key="ans" class="letter-chip">{{ ans }}</span>
+            </div>
+            <div v-if="parsedAnswer.options" class="options-list">
+              <div
+                v-for="(option, idx) in parsedAnswer.options"
+                :key="idx"
+                class="option-item"
+                :class="{ correct: parsedAnswer.correct_indices?.includes(idx) }"
+              >
+                <span class="option-marker">{{ parsedAnswer.correct_indices?.includes(idx) ? '✓' : '○' }}</span>
+                <span class="option-text">{{ option }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drag & Drop -->
+        <div v-else-if="parsedAnswer.type === 'dragdrop'" class="answer-card dragdrop">
+          <div class="answer-header">
+            <span class="answer-type-badge dragdrop">DRAG & DROP</span>
+          </div>
+          <div class="dragdrop-mappings">
+            <div v-for="(mapping, idx) in parsedAnswer.mappings" :key="idx" class="mapping-row">
+              <div class="mapping-item">{{ mapping.item }}</div>
+              <div class="mapping-arrow">→</div>
+              <div class="mapping-target">{{ mapping.target }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hot Area -->
+        <div v-else-if="parsedAnswer.type === 'hotarea'" class="answer-card hotarea">
+          <div class="answer-header">
+            <span class="answer-type-badge hotarea">HOT AREA</span>
+          </div>
+          <div class="hotarea-selections">
+            <div v-for="(sel, idx) in parsedAnswer.selections" :key="idx" class="hotarea-cell">
+              <div class="cell-location">
+                <span class="cell-row">{{ sel.row }}</span>
+                <span class="cell-separator">×</span>
+                <span class="cell-column">{{ sel.column }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sequence -->
+        <div v-else-if="parsedAnswer.type === 'sequence'" class="answer-card sequence">
+          <div class="answer-header">
+            <span class="answer-type-badge sequence">SEQUENCE</span>
+          </div>
+          <div class="sequence-steps">
+            <div v-for="(step, idx) in parsedAnswer.steps" :key="idx" class="sequence-step">
+              <div class="step-number">{{ idx + 1 }}</div>
+              <div class="step-text">{{ step }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Matching -->
+        <div v-else-if="parsedAnswer.type === 'matching'" class="answer-card matching">
+          <div class="answer-header">
+            <span class="answer-type-badge matching">MATCHING</span>
+          </div>
+          <div class="matching-pairs">
+            <div v-for="(pair, idx) in parsedAnswer.pairs" :key="idx" class="match-pair">
+              <div class="match-left">{{ pair.left }}</div>
+              <div class="match-connector">
+                <svg viewBox="0 0 24 24"><path d="M5 12h14M14 5l7 7-7 7"/></svg>
+              </div>
+              <div class="match-right">{{ pair.right }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Yes/No -->
+        <div v-else-if="parsedAnswer.type === 'yesno'" class="answer-card yesno">
+          <div class="answer-header">
+            <span class="answer-type-badge yesno">YES / NO</span>
+          </div>
+          <div class="yesno-statements">
+            <div v-for="(item, idx) in parsedAnswer.statements" :key="idx" class="yesno-row">
+              <div class="yesno-statement">{{ item.statement }}</div>
+              <div class="yesno-answer" :class="item.answer?.toLowerCase()">
+                {{ item.answer }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Case Study -->
+        <div v-else-if="parsedAnswer.type === 'casestudy'" class="answer-card casestudy">
+          <div class="answer-header">
+            <span class="answer-type-badge casestudy">CASE STUDY</span>
+          </div>
+          <div v-if="parsedAnswer.context" class="casestudy-context">
+            {{ parsedAnswer.context }}
+          </div>
+          <div class="casestudy-answers">
+            <div v-for="(item, idx) in parsedAnswer.answers" :key="idx" class="casestudy-item">
+              <div class="casestudy-question">{{ item.question }}</div>
+              <div class="casestudy-answer">{{ item.answer }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div v-else-if="parsedAnswer.type === 'error'" class="answer-card error">
+          <div class="answer-header">
+            <span class="answer-type-badge error">ERROR</span>
+          </div>
+          <div class="error-message">
+            <span class="error-icon">⚠️</span>
+            <p>{{ parsedAnswer.message }}</p>
+          </div>
+        </div>
+
+        <!-- Fallback (plain text) -->
+        <div v-else class="answer-card fallback">
+          <div class="answer-header">
+            <span class="answer-type-badge">ANSWER</span>
+          </div>
+          <div class="fallback-text">{{ rawAnswer }}</div>
+        </div>
+
+        <!-- Metadata -->
+        <div class="answer-meta">
+          <span class="meta-time">{{ formatTimestamp(currentAnswer.timestamp) }}</span>
+          <span v-if="currentAnswer.model" class="meta-model">{{ currentAnswer.model }}</span>
         </div>
       </div>
     </main>
 
     <!-- Footer -->
     <footer class="footer">
-      <p>Powered by GPT-5.2 • Microsoft Azure Exam Assistant</p>
+      <span>Azure Exam Assistant</span>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 interface AnswerData {
   type: 'answer'
@@ -61,16 +224,95 @@ interface ProcessingData {
 
 type EventData = AnswerData | ProcessingData
 
+// Parsed answer types
+interface SingleAnswer {
+  type: 'single'
+  answer: string
+  options?: string[]
+  correct_index?: number
+}
+
+interface MultipleAnswer {
+  type: 'multiple'
+  answers: string[]
+  options?: string[]
+  correct_indices?: number[]
+}
+
+interface DragDropAnswer {
+  type: 'dragdrop'
+  mappings: Array<{ item: string; target: string }>
+}
+
+interface HotAreaAnswer {
+  type: 'hotarea'
+  selections: Array<{ row: string; column: string }>
+}
+
+interface SequenceAnswer {
+  type: 'sequence'
+  steps: string[]
+}
+
+interface MatchingAnswer {
+  type: 'matching'
+  pairs: Array<{ left: string; right: string }>
+}
+
+interface YesNoAnswer {
+  type: 'yesno'
+  statements: Array<{ statement: string; answer: string }>
+}
+
+interface CaseStudyAnswer {
+  type: 'casestudy'
+  context?: string
+  answers: Array<{ question: string; answer: string }>
+}
+
+interface ErrorAnswer {
+  type: 'error'
+  message: string
+}
+
+interface FallbackAnswer {
+  type: 'fallback'
+  text: string
+}
+
+type ParsedAnswer = SingleAnswer | MultipleAnswer | DragDropAnswer | HotAreaAnswer |
+                    SequenceAnswer | MatchingAnswer | YesNoAnswer | CaseStudyAnswer |
+                    ErrorAnswer | FallbackAnswer
+
 const currentAnswer = ref<AnswerData | null>(null)
 const isProcessing = ref(false)
 const connected = ref(false)
 let eventSource: EventSource | null = null
 let processingTimeout: ReturnType<typeof setTimeout> | null = null
 
-// Processing timeout (60 seconds) - resets if no answer received
 const PROCESSING_TIMEOUT_MS = 60000
 
-// Format timestamp
+// Raw answer text
+const rawAnswer = computed(() => currentAnswer.value?.answer || '')
+
+// Parse the JSON answer
+const parsedAnswer = computed<ParsedAnswer>(() => {
+  if (!currentAnswer.value?.answer) {
+    return { type: 'fallback', text: '' }
+  }
+
+  try {
+    const parsed = JSON.parse(currentAnswer.value.answer)
+    if (parsed.type) {
+      return parsed
+    }
+    return { type: 'fallback', text: currentAnswer.value.answer }
+  } catch {
+    // Not valid JSON, return as fallback text
+    return { type: 'fallback', text: currentAnswer.value.answer }
+  }
+})
+
 const formatTimestamp = (timestamp: string) => {
   try {
     const date = new Date(timestamp)
@@ -84,10 +326,8 @@ const formatTimestamp = (timestamp: string) => {
   }
 }
 
-// Connect to SSE stream
 const connectSSE = () => {
   console.log('[Frontend] Connecting to SSE stream...')
-
   eventSource = new EventSource('/api/stream')
 
   eventSource.onopen = () => {
@@ -99,281 +339,778 @@ const connectSSE = () => {
     console.log('[Frontend] Raw event data:', event.data)
     try {
       const data = JSON.parse(event.data) as EventData
-      console.log('[Frontend] Parsed event data:', data)
 
-      // Handle processing event
       if (data.type === 'processing') {
         isProcessing.value = true
-        console.log('[Frontend] ✓ Processing started')
-
-        // Set timeout to auto-clear processing state (in case of backend error)
         if (processingTimeout) clearTimeout(processingTimeout)
         processingTimeout = setTimeout(() => {
           if (isProcessing.value) {
-            console.log('[Frontend] ⚠ Processing timeout - clearing state')
             isProcessing.value = false
           }
         }, PROCESSING_TIMEOUT_MS)
         return
       }
 
-      // Handle answer event
       if (data.type === 'answer' && data.answer) {
-        // Clear timeout since we got an answer
         if (processingTimeout) {
           clearTimeout(processingTimeout)
           processingTimeout = null
         }
         currentAnswer.value = data
         isProcessing.value = false
-        console.log('[Frontend] ✓ Answer updated in UI')
+        console.log('[Frontend] Answer updated')
       }
     } catch (error) {
-      console.log('[Frontend] Non-JSON message (probably connection confirm):', event.data)
+      console.log('[Frontend] Non-JSON message:', event.data)
     }
   }
 
-  eventSource.onerror = (error) => {
-    console.error('[Frontend] SSE error:', error)
+  eventSource.onerror = () => {
+    console.error('[Frontend] SSE error')
     connected.value = false
-
-    // Reconnect after 3 seconds
-    setTimeout(() => {
-      console.log('[Frontend] Attempting to reconnect...')
-      connectSSE()
-    }, 3000)
+    setTimeout(() => connectSSE(), 3000)
   }
 }
 
-// Lifecycle
 onMounted(() => {
   connectSSE()
 })
 
 onUnmounted(() => {
-  if (eventSource) {
-    eventSource.close()
-  }
-  if (processingTimeout) {
-    clearTimeout(processingTimeout)
-  }
+  if (eventSource) eventSource.close()
+  if (processingTimeout) clearTimeout(processingTimeout)
 })
 </script>
 
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap');
+
+:root {
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-card: #1a1a24;
+  --bg-elevated: #22222e;
+
+  --accent-cyan: #00f5d4;
+  --accent-magenta: #f72585;
+  --accent-yellow: #fee440;
+  --accent-blue: #4361ee;
+  --accent-orange: #ff6b35;
+  --accent-green: #7ae582;
+  --accent-purple: #9d4edd;
+
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0b0;
+  --text-muted: #606070;
+
+  --border-subtle: rgba(255,255,255,0.08);
+  --border-accent: rgba(0,245,212,0.3);
+
+  --font-mono: 'Space Mono', monospace;
+  --font-sans: 'DM Sans', sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+</style>
+
 <style scoped>
-.container {
+.app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background:
+    radial-gradient(ellipse at 20% 0%, rgba(0,245,212,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(247,37,133,0.08) 0%, transparent 50%),
+    var(--bg-primary);
 }
 
 /* Header */
 .header {
-  padding: 1.5rem 2rem;
-  background: rgba(30, 41, 59, 0.5);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 1rem 1.25rem;
+  background: rgba(10,10,15,0.9);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.header h1 {
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logo-icon {
   font-size: 1.5rem;
+}
+
+.logo-text {
+  font-family: var(--font-mono);
+  font-size: 1.125rem;
   font-weight: 700;
-  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-.status {
+.connection-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.875rem;
-  color: #cbd5e1;
+  padding: 0.375rem 0.75rem;
+  background: var(--bg-elevated);
+  border-radius: 100px;
+  border: 1px solid var(--border-subtle);
 }
 
-.status-dot {
+.connection-status.connected {
+  border-color: var(--accent-green);
+  background: rgba(122,229,130,0.1);
+}
+
+.status-pulse {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--accent-magenta);
   animation: pulse 2s infinite;
 }
 
-.status-dot.connected {
-  background: #10b981;
+.connection-status.connected .status-pulse {
+  background: var(--accent-green);
 }
 
-.status-dot.disconnected {
-  background: #ef4444;
+.status-text {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.connection-status.connected .status-text {
+  color: var(--accent-green);
 }
 
 @keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.9); }
 }
 
-/* Main Content */
+/* Main */
 .main {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
+  flex-direction: column;
+  padding: 1.5rem 1rem;
+  overflow-y: auto;
 }
 
 /* Processing State */
-.processing-indicator {
-  text-align: center;
-  margin-bottom: 2rem;
+.processing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
 }
 
-.spinner {
-  width: 60px;
-  height: 60px;
-  border: 4px solid rgba(96, 165, 250, 0.3);
-  border-top-color: #60a5fa;
+.processing-animation {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.scan-line {
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+  animation: scan 1.5s ease-in-out infinite;
+}
+
+@keyframes scan {
+  0%, 100% { top: 0; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.processing-icon {
+  font-size: 3rem;
+  animation: bounce 1s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.processing-text {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--accent-cyan);
+}
+
+.processing-dots {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.processing-dots span {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  margin: 0 auto 1rem;
-  animation: spin 1s linear infinite;
+  background: var(--accent-cyan);
+  animation: dotPulse 1.4s infinite ease-in-out;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+.processing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.processing-dots span:nth-child(2) { animation-delay: -0.16s; }
 
-.processing-indicator p {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: #60a5fa;
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
 }
 
 /* Waiting State */
 .waiting {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
   text-align: center;
 }
 
-.pulse-ring {
-  width: 120px;
-  height: 120px;
-  border: 4px solid #60a5fa;
+.waiting-icon {
+  position: relative;
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+
+.radar-ping {
+  position: absolute;
+  inset: -20px;
+  border: 2px solid var(--accent-cyan);
   border-radius: 50%;
-  margin: 0 auto 2rem;
-  animation: pulse-ring 2s ease-out infinite;
+  animation: radarPing 2s ease-out infinite;
 }
 
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.95);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.7;
-  }
-  100% {
-    transform: scale(0.95);
-    opacity: 1;
-  }
+@keyframes radarPing {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
 }
 
-.waiting p {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-  color: #e2e8f0;
+.waiting-title {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-primary);
 }
 
-.waiting small {
-  color: #94a3b8;
-  font-size: 1rem;
+.waiting-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted);
 }
 
 /* Answer Display */
-.answer-container {
-  width: 100%;
-  max-width: 1200px;
-  animation: fadeIn 0.5s ease-in;
-  transition: opacity 0.3s ease;
+.answer-display {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  animation: slideUp 0.4s ease-out;
 }
 
-.answer-container.dimmed {
-  opacity: 0.5;
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Answer Card Base */
+.answer-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
 }
 
-.answer-box {
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 1.5rem;
-  padding: 3rem;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(20px);
+.answer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1rem;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-.answer-text {
-  font-size: 3rem;
+.answer-type-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
   font-weight: 700;
-  line-height: 1.3;
-  margin-bottom: 2rem;
-  color: #f1f5f9;
+  letter-spacing: 0.1em;
+  padding: 0.25rem 0.625rem;
+  border-radius: 4px;
+  background: var(--accent-cyan);
+  color: var(--bg-primary);
+}
+
+.answer-type-badge.multiple { background: var(--accent-magenta); }
+.answer-type-badge.dragdrop { background: var(--accent-blue); }
+.answer-type-badge.hotarea { background: var(--accent-orange); }
+.answer-type-badge.sequence { background: var(--accent-purple); }
+.answer-type-badge.matching { background: var(--accent-yellow); color: var(--bg-primary); }
+.answer-type-badge.yesno { background: var(--accent-green); color: var(--bg-primary); }
+.answer-type-badge.casestudy { background: #6366f1; }
+.answer-type-badge.error { background: var(--accent-magenta); }
+
+.answer-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Single Choice */
+.single-answer {
+  padding: 1.5rem 1rem;
+}
+
+.correct-letter {
+  font-family: var(--font-mono);
+  font-size: 4rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 40px rgba(0,245,212,0.5);
+  margin-bottom: 1.5rem;
+}
+
+.options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.option-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.option-item.correct {
+  background: rgba(0,245,212,0.1);
+  border-color: var(--accent-cyan);
+}
+
+.option-marker {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.option-item.correct .option-marker {
+  background: var(--accent-cyan);
+  color: var(--bg-primary);
+  font-weight: 700;
+}
+
+.option-text {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.option-item.correct .option-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Multiple Choice */
+.multiple-answers {
+  padding: 1.5rem 1rem;
+}
+
+.correct-letters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.letter-chip {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  padding: 0.5rem 1rem;
+  background: linear-gradient(135deg, var(--accent-magenta), var(--accent-purple));
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(247,37,133,0.3);
+}
+
+/* Drag & Drop */
+.dragdrop-mappings {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.mapping-item {
+  flex: 1;
+  font-size: 0.875rem;
+  padding: 0.625rem 0.875rem;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--accent-blue);
+  color: var(--text-primary);
+}
+
+.mapping-arrow {
+  font-size: 1.25rem;
+  color: var(--accent-blue);
+  font-weight: 700;
+}
+
+.mapping-target {
+  flex: 1;
+  font-size: 0.875rem;
+  padding: 0.625rem 0.875rem;
+  background: rgba(67,97,238,0.2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-blue);
+  color: var(--accent-blue);
+  font-weight: 500;
+}
+
+/* Hot Area */
+.hotarea-selections {
+  padding: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.hotarea-cell {
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(255,107,53,0.2), rgba(255,107,53,0.1));
+  border: 2px solid var(--accent-orange);
+  border-radius: var(--radius-md);
+  flex: 1;
+  min-width: 140px;
+}
+
+.cell-location {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.cell-row {
+  color: var(--accent-orange);
+}
+
+.cell-separator {
+  color: var(--text-muted);
+}
+
+.cell-column {
+  color: var(--text-primary);
+}
+
+/* Sequence */
+.sequence-steps {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sequence-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--accent-purple);
+}
+
+.step-number {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.875rem;
+  background: var(--accent-purple);
+  color: white;
+  border-radius: 50%;
+}
+
+.step-text {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  padding-top: 0.25rem;
+}
+
+/* Matching */
+.matching-pairs {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.match-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.match-left {
+  flex: 1;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(254,228,64,0.15);
+  border-radius: var(--radius-sm);
+  color: var(--accent-yellow);
+  font-weight: 500;
+}
+
+.match-connector {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.match-connector svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--accent-yellow);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.match-right {
+  flex: 1;
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+/* Yes/No */
+.yesno-statements {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.yesno-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.yesno-statement {
+  flex: 1;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.yesno-answer {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.375rem 0.875rem;
+  border-radius: 100px;
+  text-transform: uppercase;
+}
+
+.yesno-answer.yes {
+  background: rgba(122,229,130,0.2);
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+}
+
+.yesno-answer.no {
+  background: rgba(247,37,133,0.2);
+  color: var(--accent-magenta);
+  border: 1px solid var(--accent-magenta);
+}
+
+/* Case Study */
+.casestudy-context {
+  padding: 1rem;
+  background: var(--bg-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.casestudy-answers {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.casestudy-item {
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  border-left: 3px solid #6366f1;
+}
+
+.casestudy-question {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.casestudy-answer {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* Error */
+.error-message {
+  padding: 2rem 1rem;
   text-align: center;
 }
 
-.metadata {
-  display: flex;
-  justify-content: center;
-  gap: 2rem;
-  padding-top: 2rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.2);
+.error-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 1rem;
 }
 
-.timestamp, .model {
-  font-size: 0.875rem;
-  color: #94a3b8;
-  text-transform: uppercase;
+.error-message p {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+}
+
+/* Fallback */
+.fallback-text {
+  padding: 1.5rem 1rem;
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Metadata */
+.answer-meta {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 0.5rem;
+}
+
+.meta-time, .meta-model {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
   letter-spacing: 0.05em;
+  color: var(--text-muted);
+  text-transform: uppercase;
 }
 
 /* Footer */
 .footer {
-  padding: 1.5rem 2rem;
+  padding: 1rem;
   text-align: center;
-  color: #64748b;
-  font-size: 0.875rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Responsive */
-@media (max-width: 768px) {
-  .answer-text {
-    font-size: 2rem;
-  }
-
-  .answer-box {
+@media (min-width: 640px) {
+  .main {
     padding: 2rem;
+    max-width: 600px;
+    margin: 0 auto;
+    width: 100%;
   }
 
-  .header h1 {
-    font-size: 1.25rem;
+  .correct-letter {
+    font-size: 5rem;
   }
 }
 </style>
