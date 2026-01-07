@@ -301,7 +301,7 @@ let heartbeatTimeout: ReturnType<typeof setTimeout> | null = null
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 let lastMessageId: string | null = null
 
-const PROCESSING_TIMEOUT_MS = 60000
+const PROCESSING_TIMEOUT_MS = 120000
 const HEARTBEAT_TIMEOUT_MS = 25000 // Should receive heartbeat every 15s, timeout at 25s
 const POLLING_INTERVAL_MS = 5000 // Fallback polling every 5s when SSE is unreliable
 
