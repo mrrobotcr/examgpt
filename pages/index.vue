@@ -393,23 +393,33 @@ const fetchLatest = async () => {
 
     if (!data.success) return
 
-    // Check if there's a new message we missed
-    if (data.lastMessageId && data.lastMessageId !== lastMessageId) {
-      console.log('[Frontend] Polling detected new message:', data.lastMessageId)
+    // Always sync processing state with server (regardless of messageId)
+    if (data.isProcessing && !isProcessing.value) {
+      isProcessing.value = true
+      if (data.lastMessageId) lastMessageId = data.lastMessageId
+      console.log('[Frontend] Polling: Processing started')
 
-      // Update processing state
-      if (data.isProcessing && !isProcessing.value) {
-        isProcessing.value = true
-        console.log('[Frontend] Polling: Processing started')
-      }
+      // Set processing timeout
+      if (processingTimeout) clearTimeout(processingTimeout)
+      processingTimeout = setTimeout(() => {
+        if (isProcessing.value) {
+          isProcessing.value = false
+        }
+      }, PROCESSING_TIMEOUT_MS)
+    }
 
-      // Update answer if available and different
-      if (data.answer && data.answer.messageId !== lastMessageId) {
-        currentAnswer.value = data.answer
-        isProcessing.value = false
-        lastMessageId = data.answer.messageId
-        console.log('[Frontend] Polling: Answer updated from fallback')
+    // Check if there's a new answer we missed
+    if (data.answer && data.answer.messageId && data.answer.messageId !== lastMessageId) {
+      console.log('[Frontend] Polling detected new answer:', data.answer.messageId)
+      currentAnswer.value = data.answer
+      isProcessing.value = false
+      lastMessageId = data.answer.messageId
+
+      if (processingTimeout) {
+        clearTimeout(processingTimeout)
+        processingTimeout = null
       }
+      console.log('[Frontend] Polling: Answer updated from fallback')
     }
   } catch (error) {
     console.error('[Frontend] Polling error:', error)
@@ -490,6 +500,10 @@ const connectSSE = () => {
             isProcessing.value = false
           }
         }, PROCESSING_TIMEOUT_MS)
+
+        // Start polling as backup during long processing (Vercel SSE limits)
+        startPolling()
+
         console.log('[Frontend] Processing started')
         return
       }
@@ -511,6 +525,10 @@ const connectSSE = () => {
         currentAnswer.value = answerData
         isProcessing.value = false
         if (answerData.messageId) lastMessageId = answerData.messageId
+
+        // Stop polling once we have the answer
+        stopPolling()
+
         console.log('[Frontend] Answer updated:', answerData.messageId)
       }
     } catch (error) {
