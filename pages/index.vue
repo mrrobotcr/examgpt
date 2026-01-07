@@ -308,6 +308,42 @@ const POLLING_INTERVAL_MS = 5000 // Fallback polling every 5s when SSE is unreli
 // Raw answer text
 const rawAnswer = computed(() => currentAnswer.value?.answer || '')
 
+// Helper to extract letter from answer (handles "A", "A.", "A. Option text", or full option text)
+const extractLetter = (answer: string, options?: string[], correctIndex?: number): string => {
+  // If it's already a single letter (with optional period)
+  const letterMatch = answer.match(/^([A-Z])\.?$/i)
+  if (letterMatch) {
+    return letterMatch[1].toUpperCase()
+  }
+
+  // If we have correct_index, use it to get the letter
+  if (typeof correctIndex === 'number') {
+    return String.fromCharCode(65 + correctIndex) // 0 -> A, 1 -> B, etc.
+  }
+
+  // Try to find the answer in options and get its letter
+  if (options && options.length > 0) {
+    for (let i = 0; i < options.length; i++) {
+      const option = options[i]
+      // Check if answer matches the option text (with or without letter prefix)
+      const optionText = option.replace(/^[A-Z]\.?\s*/i, '').trim()
+      if (answer.toLowerCase() === optionText.toLowerCase() ||
+          answer.toLowerCase() === option.toLowerCase()) {
+        return String.fromCharCode(65 + i)
+      }
+    }
+  }
+
+  // Fallback: return first letter if answer starts with "A.", "B.", etc.
+  const prefixMatch = answer.match(/^([A-Z])[\.\s]/i)
+  if (prefixMatch) {
+    return prefixMatch[1].toUpperCase()
+  }
+
+  // Last resort: return the answer as-is (truncated if too long)
+  return answer.length > 3 ? answer.substring(0, 1).toUpperCase() : answer
+}
+
 // Parse the JSON answer
 const parsedAnswer = computed<ParsedAnswer>(() => {
   if (!currentAnswer.value?.answer) {
@@ -317,6 +353,16 @@ const parsedAnswer = computed<ParsedAnswer>(() => {
   try {
     const parsed = JSON.parse(currentAnswer.value.answer)
     if (parsed.type) {
+      // Normalize single choice answer to just the letter
+      if (parsed.type === 'single' && parsed.answer) {
+        parsed.answer = extractLetter(parsed.answer, parsed.options, parsed.correct_index)
+      }
+      // Normalize multiple choice answers to just letters
+      if (parsed.type === 'multiple' && Array.isArray(parsed.answers)) {
+        parsed.answers = parsed.answers.map((ans: string) =>
+          extractLetter(ans, parsed.options)
+        )
+      }
       return parsed
     }
     return { type: 'fallback', text: currentAnswer.value.answer }
